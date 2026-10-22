@@ -1,0 +1,156 @@
+# SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates
+# <open-source-office@arm.com>
+# SPDX-License-Identifier: MIT
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Verify this tag before building a release
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.12"
+          activate-environment: true
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+      - name: Verify release tag and version
+        if: inputs.release_tag != ''
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          import tomllib
+
+          with open("pyproject.toml", "rb") as stream:
+              version = tomllib.load(stream)["project"]["version"]
+          tag = f"v{version}"
+          if os.environ["RELEASE_TAG"] != tag:
+              raise SystemExit(f"Release tag must match pyproject.toml: {tag}")
+          commit = subprocess.check_output(
+              ["git", "rev-parse", f"refs/tags/{tag}^{{commit}}"], text=True
+          ).strip()
+          if commit != os.environ["GITHUB_SHA"]:
+              raise SystemExit("The release tag must point to the selected revision.")
+          PY
+      - name: Check and build distributions
+        run: |
+          uv pip install build twine ruff
+          python -m ruff check src tests
+          python -m ruff format --check src tests
+          python -m build --installer uv
+          python -m twine check --strict dist/*
+      - name: Unpack distributions for the SBOM
+        run: |
+          python - <<'PY'
+          import os
+          import tarfile
+          import tomllib
+          import zipfile
+          from pathlib import Path
+
+          with open("pyproject.toml", "rb") as stream:
+              project = tomllib.load(stream)["project"]
+          with open(os.environ["GITHUB_ENV"], "a") as stream:
+              stream.write(f"SYFT_SOURCE_NAME={project['name']}\n")
+              stream.write(f"SYFT_SOURCE_VERSION={project['version']}\n")
+          with zipfile.ZipFile(next(Path("dist").glob("*.whl"))) as archive:
+              archive.extractall("sbom-source/wheel")
+          with tarfile.open(next(Path("dist").glob("*.tar.gz"))) as archive:
+              archive.extractall("sbom-source/source", filter="data")
+          PY
+      - name: Generate the release SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: sbom-source
+          format: spdx-json
+          output-file: sbom.spdx.json
+          syft-version: v1.55.0
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Check licenses and add the SBOM disclaimer
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("sbom.spdx.json")
+          sbom = json.loads(path.read_text())
+          packages = [
+              package for package in sbom["packages"]
+              if package.get("primaryPackagePurpose") != "FILE"
+          ]
+          if not packages or any(
+              package.get("licenseDeclared") in (None, "", "NONE", "NOASSERTION")
+              for package in packages
+          ):
+              raise SystemExit("The SBOM must identify components and their licenses.")
+          sbom["documentComment"] = (
+              'THIS SOFTWARE BILL OF MATERIALS (“SBOM”) IS PROVIDED BY ARM LIMITED '
+              '"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT '
+              'LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR '
+              'A PARTICULAR PURPOSE, AND NONINFRINGEMENT ARE DISCLAIMED. IN NO '
+              'EVENT SHALL ARM LIMITED BE LIABLE FOR ANY DIRECT, INDIRECT, '
+              'INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES '
+              '(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS '
+              'OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS '
+              'INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, '
+              'WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING '
+              'NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF '
+              'THIS SBOM, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.'
+          )
+          path.write_text(json.dumps(sbom, indent=2) + "\n")
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-artifacts
+          path: |
+            dist/
+            sbom.spdx.json
+          if-no-files-found: error
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-artifacts
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: ${{ matrix.python }}
+          activate-environment: true
+          enable-cache: true
+          cache-dependency-glob: dist/*.whl
+      - name: Test the wheel in a uv project
+        run: |
+          uv init --bare --name wheel-test
+          uv add pytest dist/*.whl
+          tar -xzf dist/*.tar.gz
+          uv run pytest -q -o pythonpath= mali_frame_selection_core-*/tests

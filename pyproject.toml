@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates
+# <open-source-office@arm.com>
+# SPDX-License-Identifier: MIT
+
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mali-frame-selection-core"
+version = "1.0.0"
+description = "Select representative workload frames and calculate their weights"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy",
+    "pandas",
+    "scikit-learn",
+]
+
+[project.urls]
+Repository = "https://github.com/ARM-software/mali-frame-selection-core"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "build",
+    "twine",
+    "ruff",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["frame_selection_core", "frame_selection_core.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "C90"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+known-first-party = ["frame_selection_core"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.isort]
+profile = "black"
+force_single_line = true
+known_first_party = ["frame_selection_core"]
