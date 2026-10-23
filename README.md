@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates
 SPDX-License-Identifier: MIT
 -->
 
-# Mali frame selection core
+# Arm® Mali™ frame selection core
 
 A Python library for choosing representative frames from a workload. It groups
 frames with similar performance measurements and selects stable frames from each
@@ -90,3 +90,6 @@ python -m ruff format --check src tests
 ## License
 
 This project is licensed under the [MIT License](https://github.com/ARM-software/mali-frame-selection-core/blob/main/LICENSE).
+
+Arm and Mali are registered trademarks or trademarks of Arm Limited
+(or its subsidiaries or affiliates) in the US and/or elsewhere.
