@@ -89,4 +89,4 @@ python -m ruff format --check src tests
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](https://github.com/ARM-software/mali-frame-selection-core/blob/main/LICENSE).
